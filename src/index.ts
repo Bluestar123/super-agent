@@ -3,13 +3,21 @@ import { generateText, stepCountIs, streamText, type ModelMessage } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createMockModel } from "./mock-model";
 import { createInterface } from "node:readline";
-import { weatherTool, calculatorTool } from "./tools/utility-tools";
 import { agentLoop, type BudgetState } from "./agent/loop";
+import { ToolRegistry } from "./tool-registry";
+import { allTools } from "./tools/utility-tools";
 
-const tools = {
-  get_weather: weatherTool,
-  calculator: calculatorTool,
-};
+const registry = new ToolRegistry();
+registry.register(...allTools);
+
+console.log(`已注册 ${registry.getAll().length} 个工具：`);
+for (const tool of registry.getAll()) {
+  const flags = [
+    tool.isConcurrencySafe ? "可并发" : "串行",
+    tool.isReadOnly ? "只读" : "读写",
+  ].join(", ");
+  console.log(`  - ${tool.name}（${flags}）`);
+}
 
 const qwen = createOpenAI({
   baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -51,11 +59,12 @@ function ask() {
       content: trimmed,
     });
 
-    await agentLoop(model, tools, messages, SYSTEM);
+    await agentLoop(model, registry, messages, SYSTEM, budget);
     ask();
   });
 }
-console.log('Super Agent v0.2 — Agent Loop (type "exit" to quit)\n');
+console.log('Super Agent v0.3 — Fuses (type "exit" to quit)\n');
+console.log('试试输入："测试死循环"、"测试重试"、"测试预算" 看三层防护效果\n');
 ask();
 
 // async function main() {
