@@ -129,8 +129,8 @@ export async function agentLoop(
     const pct = Math.round((budget.used / budget.limit) * 100);
     console.log(`  [Token] ${budget.used}/${budget.limit} (${pct}%)`);
     if (budget.used > budget.limit) {
-      console.log("\n[Token 预算耗尽，强制停止]");
-      break;
+      console.log("\n[Token 预算耗尽]");
+      // break;
     }
 
     if (!hasToolCall) {
