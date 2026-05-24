@@ -379,6 +379,7 @@ export const fetchUrlTool: ToolDefinition = {
 };
 
 import { createServer, type Server } from "node:http";
+import { pickSearchTool, webFetchTool } from "../search-tools.js";
 
 let previewServer: Server | null = null;
 
@@ -456,4 +457,6 @@ export const allTools: ToolDefinition[] = [
   bashTool,
   fetchUrlTool,
   startPreviewTool,
+  pickSearchTool(),
+  webFetchTool,
 ];
