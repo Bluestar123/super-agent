@@ -16,7 +16,6 @@ export async function agentLoop(
   registry: ToolRegistry,
   messages: ModelMessage[],
   system: string,
-  budget: BudgetState,
 ) {
   let step = 0;
 
@@ -125,13 +124,13 @@ export async function agentLoop(
       typeof stepUsage?.outputTokens === "number"
         ? stepUsage.outputTokens
         : (stepUsage?.outputTokens?.total ?? 0);
-    budget.used += inp + out;
-    const pct = Math.round((budget.used / budget.limit) * 100);
-    console.log(`  [Token] ${budget.used}/${budget.limit} (${pct}%)`);
-    if (budget.used > budget.limit) {
-      console.log("\n[Token 预算耗尽]");
-      // break;
-    }
+    // budget.used += inp + out;
+    // const pct = Math.round((budget.used / budget.limit) * 100);
+    // console.log(`  [Token] ${budget.used}/${budget.limit} (${pct}%)`);
+    // if (budget.used > budget.limit) {
+    //   console.log("\n[Token 预算耗尽]");
+    //   // break;
+    // }
 
     if (!hasToolCall) {
       if (fullText) console.log();
