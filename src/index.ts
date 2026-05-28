@@ -7,6 +7,7 @@ import { agentLoop, type BudgetState } from "./agent/loop";
 import { ToolDefinition, ToolRegistry } from "./tool-registry";
 import { allTools } from "./tools/utility-tools";
 import { MCPClient } from "./tools/mcp-client";
+import { SessionStore } from "./session/store";
 
 const registry = new ToolRegistry();
 registry.register(...allTools);
@@ -224,7 +225,7 @@ async function connectMCP() {
   }
 
   if (githubToken && canSpawn) {
-    console.log("\n连接 GitHub MCP Server...");
+    // console.log("\n连接 GitHub MCP Server...");
     try {
       const client = new MCPClient(
         "npx",
@@ -232,7 +233,7 @@ async function connectMCP() {
         { GITHUB_PERSONAL_ACCESS_TOKEN: githubToken },
       );
       const tools = await registry.registerMCPServer("github", client);
-      console.log(`  已注册 ${tools.length} 个 MCP 工具`);
+      // console.log(`  已注册 ${tools.length} 个 MCP 工具`);
       return;
     } catch (err) {
       console.log(
@@ -251,13 +252,13 @@ async function connectMCP() {
   // console.log(`  已注册 ${tools.length} 个 Mock MCP 工具`);
 }
 
-console.log(`已注册 ${registry.getAll().length} 个工具：`);
+// console.log(`已注册 ${registry.getAll().length} 个工具：`);
 for (const tool of registry.getAll()) {
   const flags = [
     tool.isConcurrencySafe ? "可并发" : "串行",
     tool.isReadOnly ? "只读" : "读写",
   ].join(", ");
-  console.log(`  - ${tool.name}（${flags}）`);
+  // console.log(`  - ${tool.name}（${flags}）`);
 }
 
 const qwen = createOpenAI({
@@ -277,31 +278,45 @@ async function main() {
   //   `  已注册 ${simCount} 个模拟 MCP 工具（Notion/Browser/Supabase）`,
   // );
 
-  const allCount = registry.getAll().length;
-  const activeTools = registry.getActiveTools();
-  const estimate = registry.countTokenEstimate();
+  // const allCount = registry.getAll().length;
+  // const activeTools = registry.getActiveTools();
+  // const estimate = registry.countTokenEstimate();
 
-  console.log(`\n=== 工具统计 ===`);
-  console.log(`  全部工具: ${allCount} 个`);
-  console.log(`  活跃工具: ${activeTools.length} 个（非延迟）`);
-  console.log(`  延迟工具: ${allCount - activeTools.length} 个`);
-  console.log(
-    `  Token 估算: ~${estimate.active} (活跃) + ~${estimate.deferred} (延迟)`,
-  );
+  // console.log(`\n=== 工具统计 ===`);
+  // console.log(`  全部工具: ${allCount} 个`);
+  // console.log(`  活跃工具: ${activeTools.length} 个（非延迟）`);
+  // console.log(`  延迟工具: ${allCount - activeTools.length} 个`);
+  // console.log(
+  //   `  Token 估算: ~${estimate.active} (活跃) + ~${estimate.deferred} (延迟)`,
+  // );
+
+  // Session 持久化
+  const isContinue = process.argv.includes("--continue");
+  const sessionId = "default";
+  const store = new SessionStore(sessionId);
+
+  let messages: ModelMessage[] = [];
+  if (isContinue && store.exists()) {
+    messages = store.load();
+    console.log(
+      `\n[Session] 恢复会话 "${sessionId}"，${messages.length} 条历史消息`,
+    );
+  } else {
+    console.log(`\n[Session] 新会话 "${sessionId}"`);
+  }
 
   const deferredSummary = registry.getDeferredToolSummary();
 
-  console.log(`\n已注册 ${registry.getAll().length} 个工具：`);
   for (const tool of registry.getAll()) {
     const isMCP = tool.name.startsWith("mcp__");
     const flags = [
       isMCP ? "MCP" : "内置",
       tool.isConcurrencySafe ? "可并发" : "串行",
     ].join(", ");
-    console.log(`  - ${tool.name}（${flags}）`);
+    // console.log(`  - ${tool.name}（${flags}）`);
   }
 
-  const messages: ModelMessage[] = [];
+  // const messages: ModelMessage[] = [];
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
   const SYSTEM = `你是 Super Agent，一个有工具调用能力的 AI 助手。
@@ -320,8 +335,16 @@ async function main() {
         return;
       }
 
-      messages.push({ role: "user", content: trimmed });
+      const useMessage: ModelMessage = { role: "user", content: trimmed };
+      messages.push(useMessage);
+      store.append(useMessage);
+
+      const beforeLen = messages.length;
       await agentLoop(model, registry, messages, SYSTEM);
+
+      // 持久化本轮新增的消息（agent loop 会往 messages 里 push assistant/tool 消息）
+      const newMessages = messages.slice(beforeLen);
+      store.appendAll(newMessages);
       ask();
     });
   }
