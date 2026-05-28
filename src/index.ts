@@ -8,6 +8,14 @@ import { ToolDefinition, ToolRegistry } from "./tool-registry";
 import { allTools } from "./tools/utility-tools";
 import { MCPClient } from "./tools/mcp-client";
 import { SessionStore } from "./session/store";
+import {
+  coreRules,
+  deferredTools,
+  PromptBuilder,
+  sessionContext,
+  toolGuide,
+  type PromptContext,
+} from "./context/prompt-builder";
 
 const registry = new ToolRegistry();
 registry.register(...allTools);
@@ -305,7 +313,22 @@ async function main() {
     console.log(`\n[Session] 新会话 "${sessionId}"`);
   }
 
-  const deferredSummary = registry.getDeferredToolSummary();
+  const builder = new PromptBuilder()
+    .pipe("coreRules", coreRules())
+    .pipe("toolGuide", toolGuide())
+    .pipe("deferredTools", deferredTools())
+    .pipe("sessionContext", sessionContext());
+
+  const promptCtx: PromptContext = {
+    toolCount: registry.getActiveTools().length,
+    deferredToolSummary: registry.getDeferredToolSummary(),
+    sessionMessageCount: messages.length,
+    sessionId,
+  };
+  const SYSTEM = builder.build(promptCtx);
+  builder.debug(promptCtx); // 显示各模块状态
+
+  // const deferredSummary = registry.getDeferredToolSummary();
 
   for (const tool of registry.getAll()) {
     const isMCP = tool.name.startsWith("mcp__");
@@ -319,11 +342,11 @@ async function main() {
   // const messages: ModelMessage[] = [];
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
-  const SYSTEM = `你是 Super Agent，一个有工具调用能力的 AI 助手。
-你有内置工具和 MCP 工具可用。MCP 工具以 mcp__ 开头，如 mcp__github__list_issues。
-需要查询 GitHub 信息时，使用 mcp__github__ 前缀的工具。
-需要操作本地文件时，使用内置工具。
-回答要简洁直接。 ${deferredSummary}`;
+  //   const SYSTEM = `你是 Super Agent，一个有工具调用能力的 AI 助手。
+  // 你有内置工具和 MCP 工具可用。MCP 工具以 mcp__ 开头，如 mcp__github__list_issues。
+  // 需要查询 GitHub 信息时，使用 mcp__github__ 前缀的工具。
+  // 需要操作本地文件时，使用内置工具。
+  // 回答要简洁直接。 ${deferredSummary}`;
 
   function ask() {
     rl.question("\nYou: ", async (input) => {
