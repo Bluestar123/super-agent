@@ -16,6 +16,7 @@ import {
   toolGuide,
   type PromptContext,
 } from "./context/prompt-builder";
+import { estimateTokens, microcompact, summarize } from "./context/compressor";
 
 const registry = new ToolRegistry();
 registry.register(...allTools);
@@ -312,6 +313,40 @@ async function main() {
   } else {
     console.log(`\n[Session] 新会话 "${sessionId}"`);
   }
+  console.log("messages------", messages);
+  let summary = "";
+  // ── 压缩演示 ──
+  const beforeTokens = estimateTokens(messages);
+  console.log(`\n[压缩前] ${messages.length} 条消息, ~${beforeTokens} tokens`);
+
+  // Layer 1: Microcompact
+  const mc = microcompact(messages);
+  messages = mc.messages;
+  const afterMCTokens = estimateTokens(messages);
+  console.log(
+    `[Layer 1: Microcompact] 清理了 ${mc.cleared} 个工具结果, 剩余~${afterMCTokens} tokens`,
+  );
+
+  // Layer 2: LLM Summarization
+  const compResult = await summarize(model, messages, summary);
+  messages = compResult.messages;
+  summary = compResult.summary;
+  const afterSumTokens = estimateTokens(messages);
+  if (compResult.compressedCount > 0) {
+    console.log(
+      `[Layer 2: Summarization] 压缩了 ${compResult.compressedCount} 条消息, ~${afterSumTokens} tokens`,
+    );
+    console.log(`[摘要预览] ${summary.slice(0, 150)}...`);
+  } else {
+    console.log(`[Layer 2: Summarization] 未触发（消息量不够）`);
+  }
+
+  console.log(
+    `[压缩后] ${messages.length} 条消息, ~${afterSumTokens} tokens (节省 ${beforeTokens - afterSumTokens} tokens)\n`,
+  );
+
+  // Clear injected history for chat — compression demo is done
+  messages = [];
 
   const builder = new PromptBuilder()
     .pipe("coreRules", coreRules())
