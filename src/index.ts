@@ -17,6 +17,7 @@ import {
   type PromptContext,
 } from "./context/prompt-builder";
 import { estimateTokens, microcompact, summarize } from "./context/compressor";
+import { applyDefense, estimateMessageTokens } from "./context/defense";
 
 const registry = new ToolRegistry();
 registry.register(...allTools);
@@ -316,37 +317,55 @@ async function main() {
   console.log("messages------", messages);
   let summary = "";
   // ── 压缩演示 ──
-  const beforeTokens = estimateTokens(messages);
-  console.log(`\n[压缩前] ${messages.length} 条消息, ~${beforeTokens} tokens`);
+  // const beforeTokens = estimateTokens(messages);
+  // console.log(`\n[压缩前] ${messages.length} 条消息, ~${beforeTokens} tokens`);
 
   // Layer 1: Microcompact
-  const mc = microcompact(messages);
-  messages = mc.messages;
-  const afterMCTokens = estimateTokens(messages);
-  console.log(
-    `[Layer 1: Microcompact] 清理了 ${mc.cleared} 个工具结果, 剩余~${afterMCTokens} tokens`,
-  );
+  // const mc = microcompact(messages);
+  // messages = mc.messages;
+  // const afterMCTokens = estimateTokens(messages);
+  // console.log(
+  //   `[Layer 1: Microcompact] 清理了 ${mc.cleared} 个工具结果, 剩余~${afterMCTokens} tokens`,
+  // );
 
   // Layer 2: LLM Summarization
-  const compResult = await summarize(model, messages, summary);
-  messages = compResult.messages;
-  summary = compResult.summary;
-  const afterSumTokens = estimateTokens(messages);
-  if (compResult.compressedCount > 0) {
-    console.log(
-      `[Layer 2: Summarization] 压缩了 ${compResult.compressedCount} 条消息, ~${afterSumTokens} tokens`,
-    );
-    console.log(`[摘要预览] ${summary.slice(0, 150)}...`);
-  } else {
-    console.log(`[Layer 2: Summarization] 未触发（消息量不够）`);
-  }
+  // const compResult = await summarize(model, messages, summary);
+  // messages = compResult.messages;
+  // summary = compResult.summary;
+  // const afterSumTokens = estimateTokens(messages);
+  // if (compResult.compressedCount > 0) {
+  //   console.log(
+  //     `[Layer 2: Summarization] 压缩了 ${compResult.compressedCount} 条消息, ~${afterSumTokens} tokens`,
+  //   );
+  //   console.log(`[摘要预览] ${summary.slice(0, 150)}...`);
+  // } else {
+  //   console.log(`[Layer 2: Summarization] 未触发（消息量不够）`);
+  // }
 
+  // console.log(
+  //   `[压缩后] ${messages.length} 条消息, ~${afterSumTokens} tokens (节省 ${beforeTokens - afterSumTokens} tokens)\n`,
+  // );
+
+  const timestamps = new Map<number, number>();
+  // Apply three-layer defense
+  const beforeTokens = estimateMessageTokens(messages);
+  console.log(`\n=== 三层即时防线 ===`);
+  console.log(`[防线前] ${messages.length} 条消息, ~${beforeTokens} tokens`);
+
+  const defense = applyDefense(messages, timestamps);
+  messages = defense.messages;
+  console.log(`[Layer 2: 截断] ${defense.truncated} 个超长结果被截断`);
   console.log(
-    `[压缩后] ${messages.length} 条消息, ~${afterSumTokens} tokens (节省 ${beforeTokens - afterSumTokens} tokens)\n`,
+    `[Layer 3: TTL] ${defense.softPruned} 个软修剪, ${defense.hardPruned} 个硬清除`,
   );
+  console.log(
+    `[防线后] ${messages.length} 条消息, ~${defense.tokenEstimate} tokens (节省 ${beforeTokens - defense.tokenEstimate})`,
+  );
+  console.log(`====================\n`);
 
   // Clear injected history for chat — compression demo is done
   messages = [];
+  timestamps.clear();
 
   const builder = new PromptBuilder()
     .pipe("coreRules", coreRules())
