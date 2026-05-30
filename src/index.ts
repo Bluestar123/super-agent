@@ -18,6 +18,12 @@ import {
 } from "./context/prompt-builder";
 import { estimateTokens, microcompact, summarize } from "./context/compressor";
 import { applyDefense, estimateMessageTokens } from "./context/defense";
+import {
+  buildContextSnapshot,
+  renderContextView,
+  renderUsageView,
+} from "./context/view";
+import { UsageTracker } from "./usage/tracker";
 
 const registry = new ToolRegistry();
 registry.register(...allTools);
@@ -347,6 +353,8 @@ async function main() {
   // );
 
   const timestamps = new Map<number, number>();
+  const tracker = new UsageTracker(".usage/today.jsonl");
+
   // Apply three-layer defense
   const beforeTokens = estimateMessageTokens(messages);
   console.log(`\n=== 三层即时防线 ===`);
@@ -396,6 +404,134 @@ async function main() {
   // const messages: ModelMessage[] = [];
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
+  // Quick triggers for demo
+  function handleQuickTrigger(cmd: string): boolean {
+    const now = Date.now();
+
+    if (cmd === "模拟长对话" || cmd === "sim") {
+      console.log("\n[模拟] 注入 20 条历史消息（含大量工具结果）...");
+      for (let i = 0; i < 5; i++) {
+        const age = (20 - i * 4) * 60 * 1000;
+        const userIdx = messages.length;
+        messages.push({
+          role: "user",
+          content: `第 ${i + 1} 轮：帮我读文件 file-${i}.ts`,
+        });
+        timestamps.set(userIdx, now - age);
+        messages.push({
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call" as const,
+              toolCallId: `sim-${i}`,
+              toolName: "read_file",
+              input: { path: `file-${i}.ts` },
+            },
+          ],
+        });
+        timestamps.set(userIdx + 1, now - age);
+        const bigContent =
+          `// file-${i}.ts\n` +
+          "export function handler() {\n  // ...\n}\n".repeat(200);
+        messages.push({
+          role: "tool",
+          content: [
+            {
+              type: "tool-result" as const,
+              toolCallId: `sim-${i}`,
+              toolName: "read_file",
+              output: bigContent,
+            },
+          ],
+        });
+        timestamps.set(userIdx + 2, now - age);
+        messages.push({
+          role: "assistant",
+          content: [
+            { type: "text" as const, text: `文件 file-${i}.ts 的内容已读取。` },
+          ],
+        });
+        timestamps.set(userIdx + 3, now - age);
+      }
+      const tokens = estimateMessageTokens(messages);
+      console.log(`[模拟完成] ${messages.length} 条消息, ~${tokens} tokens\n`);
+      return true;
+    }
+
+    if (cmd === "执行防线" || cmd === "defend") {
+      console.log("\n--- 执行三层防线 ---");
+      const before = estimateMessageTokens(messages);
+      const def = applyDefense(messages, timestamps);
+      messages = def.messages;
+      console.log(
+        `  [Layer 2] 截断: ${def.truncated} 条, 预算清理: ${def.compacted} 条`,
+      );
+      console.log(
+        `  [Layer 3] 软修剪: ${def.softPruned}, 硬清除: ${def.hardPruned}`,
+      );
+      console.log(
+        `  [结果] ~${before} → ~${def.tokenEstimate} tokens (节省 ${before - def.tokenEstimate})\n`,
+      );
+      return true;
+    }
+
+    if (cmd === "查看状态" || cmd === "status") {
+      const tokens = estimateMessageTokens(messages);
+      const toolMsgs = messages.filter((m) => m.role === "tool").length;
+      console.log(
+        `\n[状态] ${messages.length} 条消息 (${toolMsgs} 条工具结果), ~${tokens} tokens\n`,
+      );
+      return true;
+    }
+
+    // /context: 终端可视化的 context 占用，参考 Claude Code 的 /context
+    if (cmd === "/context" || cmd === "context") {
+      const snapshot = buildContextSnapshot({
+        modelName: process.env.DASHSCOPE_API_KEY
+          ? "Qwen Plus"
+          : "Mock Model (开发用)",
+        modelId: process.env.DASHSCOPE_API_KEY ? "qwen3-6-plus" : "mock-model",
+        windowTokens: 1_000_000,
+        systemPromptChars: SYSTEM.length,
+        toolDescriptionChars: registry
+          .getActiveTools()
+          .reduce(
+            (a, t) =>
+              a +
+              t.name.length +
+              (t.description?.length || 0) +
+              JSON.stringify(t.parameters || {}).length,
+            0,
+          ),
+        memoryChars: 0,
+        skillsChars: 0,
+        messages,
+      });
+      console.log(renderContextView(snapshot));
+      return true;
+    }
+
+    if (cmd === "/usage" || cmd === "usage") {
+      console.log(renderUsageView(tracker));
+      return true;
+    }
+
+    if (cmd === "/cache off" || cmd === "cache off") {
+      // setCacheEnabled(false);
+      console.log(
+        "\n  \x1b[38;5;220m⚠ 已关闭 cache 模拟\x1b[0m  接下来每次请求都按 cache miss 计算\n",
+      );
+      return true;
+    }
+    if (cmd === "/cache on" || cmd === "cache on") {
+      // setCacheEnabled(true);
+      console.log("\n  \x1b[38;5;36m✓ 已开启 cache 模拟\x1b[0m\n");
+      return true;
+    }
+
+    return false;
+  }
+
   //   const SYSTEM = `你是 Super Agent，一个有工具调用能力的 AI 助手。
   // 你有内置工具和 MCP 工具可用。MCP 工具以 mcp__ 开头，如 mcp__github__list_issues。
   // 需要查询 GitHub 信息时，使用 mcp__github__ 前缀的工具。
@@ -412,12 +548,17 @@ async function main() {
         return;
       }
 
+      if (handleQuickTrigger(trimmed)) {
+        ask();
+        return;
+      }
+
       const useMessage: ModelMessage = { role: "user", content: trimmed };
       messages.push(useMessage);
       store.append(useMessage);
 
       const beforeLen = messages.length;
-      await agentLoop(model, registry, messages, SYSTEM);
+      await agentLoop(model, registry, messages, SYSTEM, tracker);
 
       // 持久化本轮新增的消息（agent loop 会往 messages 里 push assistant/tool 消息）
       const newMessages = messages.slice(beforeLen);

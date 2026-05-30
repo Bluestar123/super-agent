@@ -1,11 +1,17 @@
 import { ModelMessage, streamText } from "ai";
-import { detect, recordCall, recordResult } from "../loop-detection";
+import {
+  detect,
+  recordCall,
+  recordResult,
+  resetHistory,
+} from "../loop-detection";
 import { calculateDelay, isRetryable, sleep } from "../retry";
 import { ToolRegistry } from "../tool-registry";
+import { type UsageTracker, normalizeUsage } from "../usage/tracker.js";
 
 const MAX_STEPS = 10;
 const MAX_RETRIES = 3;
-
+const TOKEN_BUDGET = 50000;
 export interface BudgetState {
   used: number;
   limit: number;
@@ -16,8 +22,11 @@ export async function agentLoop(
   registry: ToolRegistry,
   messages: ModelMessage[],
   system: string,
+  tracker?: UsageTracker,
 ) {
   let step = 0;
+  let totalTokens = 0;
+  resetHistory();
 
   while (step < MAX_STEPS) {
     step++;
@@ -115,15 +124,49 @@ export async function agentLoop(
     }
     messages.push(...stepResponse!.messages);
 
+    // 把 usage 喂给 tracker；tracker 内部按四类 token 分别累加并算 cost
+    const norm = normalizeUsage(stepUsage);
+    const stepRecord = tracker?.record(model?.modelId || "mock-model", norm);
+    totalTokens +=
+      norm.inputTokens +
+      norm.outputTokens +
+      norm.cacheReadTokens +
+      norm.cacheWriteTokens;
+
+    // cache 命中时才打印一行简洁状态，让 cache hit 立刻可见
+    if (stepRecord && (norm.cacheReadTokens > 0 || norm.cacheWriteTokens > 0)) {
+      const tag =
+        norm.cacheReadTokens > 0
+          ? `\x1b[38;5;36m✓ cache hit\x1b[0m`
+          : `\x1b[38;5;220m✎ cache write\x1b[0m`;
+      const detail =
+        norm.cacheReadTokens > 0
+          ? `read ${norm.cacheReadTokens}`
+          : `write ${norm.cacheWriteTokens}`;
+      console.log(
+        `  [${tag}] ${detail} tokens · 本步 $${stepRecord.cost.toFixed(5)}`,
+      );
+    }
+
+    if (totalTokens > TOKEN_BUDGET * 0.9) {
+      console.log(
+        `  [Token] ${totalTokens}/${TOKEN_BUDGET} (${Math.round((totalTokens / TOKEN_BUDGET) * 100)}%)`,
+      );
+    }
+    if (totalTokens > TOKEN_BUDGET) {
+      console.log("\n[Token 预算耗尽]");
+      break;
+    }
+
     // Token 预算追踪：budget 由调用方持有，跨轮持续累计
-    const inp =
-      typeof stepUsage?.inputTokens === "number"
-        ? stepUsage.inputTokens
-        : (stepUsage?.inputTokens?.total ?? 0);
-    const out =
-      typeof stepUsage?.outputTokens === "number"
-        ? stepUsage.outputTokens
-        : (stepUsage?.outputTokens?.total ?? 0);
+    // const inp =
+    //   typeof stepUsage?.inputTokens === "number"
+    //     ? stepUsage.inputTokens
+    //     : (stepUsage?.inputTokens?.total ?? 0);
+    // const out =
+    //   typeof stepUsage?.outputTokens === "number"
+    //     ? stepUsage.outputTokens
+    //     : (stepUsage?.outputTokens?.total ?? 0);
     // budget.used += inp + out;
     // const pct = Math.round((budget.used / budget.limit) * 100);
     // console.log(`  [Token] ${budget.used}/${budget.limit} (${pct}%)`);
