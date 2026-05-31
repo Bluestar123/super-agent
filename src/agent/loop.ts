@@ -4,9 +4,9 @@ import {
   recordCall,
   recordResult,
   resetHistory,
-} from "../loop-detection";
+} from "./loop-detection";
 import { calculateDelay, isRetryable, sleep } from "../retry";
-import { ToolRegistry } from "../tool-registry";
+import { ToolRegistry } from "../tools/tool-registry";
 import { type UsageTracker, normalizeUsage } from "../usage/tracker.js";
 
 const MAX_STEPS = 10;

@@ -1,5 +1,5 @@
 import { jsonSchema } from "ai";
-import { MCPClient } from "./tools/mcp-client";
+import { MCPClient } from "./mcp-client";
 
 export interface ToolDefinition {
   name: string;

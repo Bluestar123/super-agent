@@ -4,7 +4,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createMockModel } from "./mock-model";
 import { createInterface } from "node:readline";
 import { agentLoop, type BudgetState } from "./agent/loop";
-import { ToolDefinition, ToolRegistry } from "./tool-registry";
+import { ToolDefinition, ToolRegistry } from "./tools/tool-registry";
 import { allTools } from "./tools/utility-tools";
 import { MCPClient } from "./tools/mcp-client";
 import { SessionStore } from "./session/store";
