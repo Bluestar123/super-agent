@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 import fg from "fast-glob";
-import type { ToolDefinition } from "./tool-registry.js";
+import type { ToolDefinition } from "./registry.js";
 import { execSync } from "node:child_process";
 
 export const weatherTool: ToolDefinition = {
@@ -379,7 +379,7 @@ export const fetchUrlTool: ToolDefinition = {
 };
 
 import { createServer, type Server } from "node:http";
-import { pickSearchTool, webFetchTool } from "./search-tools.js";
+import { pickSearchTool, webFetchTool } from "./web-search.js";
 
 let previewServer: Server | null = null;
 
@@ -445,18 +445,18 @@ export const startPreviewTool: ToolDefinition = {
   },
 };
 
-export const allTools: ToolDefinition[] = [
-  weatherTool,
-  calculatorTool,
-  readFileTool,
-  writeFileTool,
-  listDirectoryTool,
-  editFileTool,
-  globTool,
-  grepTool,
-  bashTool,
-  fetchUrlTool,
-  startPreviewTool,
-  pickSearchTool(),
-  webFetchTool,
-];
+// export const allTools: ToolDefinition[] = [
+//   weatherTool,
+//   calculatorTool,
+//   readFileTool,
+//   writeFileTool,
+//   listDirectoryTool,
+//   editFileTool,
+//   globTool,
+//   grepTool,
+//   bashTool,
+//   fetchUrlTool,
+//   startPreviewTool,
+//   pickSearchTool(),
+//   webFetchTool,
+// ];

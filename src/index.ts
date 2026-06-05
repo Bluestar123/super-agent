@@ -4,8 +4,10 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createMockModel } from "./mock-model";
 import { createInterface } from "node:readline";
 import { agentLoop, type BudgetState } from "./agent/loop";
-import { ToolDefinition, ToolRegistry } from "./tools/tool-registry";
-import { allTools } from "./tools/utility-tools";
+import { ToolDefinition, ToolRegistry } from "./tools/registry";
+import { allTools } from "./tools";
+import { createToolSearchTool } from "./tools/tool-search";
+import { createMemoryTool } from "./tools/memory-tools.js";
 import { MCPClient } from "./tools/mcp-client";
 import { SessionStore } from "./session/store";
 import {
@@ -24,40 +26,21 @@ import {
   renderUsageView,
 } from "./context/view";
 import { UsageTracker } from "./usage/tracker";
+import { MemoryStore } from "./memory/store";
+import { createDispatcher, type CommandContext } from "./commands/index";
+import { debugCommands } from "./commands/debug";
+import { contextCommands } from "./commands/context";
+import { memoryCommands } from "./commands/memory";
 
+// ── Registry ────────────────────────────────
 const registry = new ToolRegistry();
 registry.register(...allTools);
+registry.register(createToolSearchTool(registry));
 
-const toolSearchTool: ToolDefinition = {
-  name: "tool_search",
-  description:
-    "获取延迟工具的完整定义。传入工具名（从系统提示的延迟工具列表中选取），返回该工具的完整参数 Schema",
-  parameters: {
-    type: "object",
-    properties: {
-      query: {
-        type: "string",
-        description:
-          '工具名，如 "mcp__github__list_issues"。支持逗号分隔多个工具名',
-      },
-    },
-    required: ["query"],
-    additionalProperties: false,
-  },
-  isConcurrencySafe: true,
-  isReadOnly: true,
-  execute: async ({ query }: { query: string }) => {
-    const results = registry.searchTools(query);
-    if (results.length === 0) return `没有找到匹配 "${query}" 的工具`;
-    return results.map((t: ToolDefinition) => ({
-      name: t.name,
-      description: t.description,
-      parameters: t.parameters,
-    }));
-  },
-};
-
-registry.register(toolSearchTool);
+// ── Memory ────────────────────────────────
+const memoryStore = new MemoryStore(".");
+memoryStore.init();
+registry.register(createMemoryTool(memoryStore));
 
 // 模拟额外的 MCP 工具（演示工具膨胀问题）
 function registerSimulatedTools() {
@@ -268,6 +251,13 @@ async function connectMCP() {
   // console.log(`  已注册 ${tools.length} 个 Mock MCP 工具`);
 }
 
+// ── Commands ────────────────────────────────
+const dispatch = createDispatcher([
+  ...debugCommands,
+  ...contextCommands,
+  ...memoryCommands,
+]);
+
 // console.log(`已注册 ${registry.getAll().length} 个工具：`);
 for (const tool of registry.getAll()) {
   const flags = [
@@ -289,23 +279,6 @@ const model = process.env.DASHSCOPE_API_KEY
 async function main() {
   await connectMCP();
 
-  // const simCount = registerSimulatedTools();
-  // console.log(
-  //   `  已注册 ${simCount} 个模拟 MCP 工具（Notion/Browser/Supabase）`,
-  // );
-
-  // const allCount = registry.getAll().length;
-  // const activeTools = registry.getActiveTools();
-  // const estimate = registry.countTokenEstimate();
-
-  // console.log(`\n=== 工具统计 ===`);
-  // console.log(`  全部工具: ${allCount} 个`);
-  // console.log(`  活跃工具: ${activeTools.length} 个（非延迟）`);
-  // console.log(`  延迟工具: ${allCount - activeTools.length} 个`);
-  // console.log(
-  //   `  Token 估算: ~${estimate.active} (活跃) + ~${estimate.deferred} (延迟)`,
-  // );
-
   // Session 持久化
   const isContinue = process.argv.includes("--continue");
   const sessionId = "default";
@@ -321,36 +294,6 @@ async function main() {
     console.log(`\n[Session] 新会话 "${sessionId}"`);
   }
   console.log("messages------", messages);
-  let summary = "";
-  // ── 压缩演示 ──
-  // const beforeTokens = estimateTokens(messages);
-  // console.log(`\n[压缩前] ${messages.length} 条消息, ~${beforeTokens} tokens`);
-
-  // Layer 1: Microcompact
-  // const mc = microcompact(messages);
-  // messages = mc.messages;
-  // const afterMCTokens = estimateTokens(messages);
-  // console.log(
-  //   `[Layer 1: Microcompact] 清理了 ${mc.cleared} 个工具结果, 剩余~${afterMCTokens} tokens`,
-  // );
-
-  // Layer 2: LLM Summarization
-  // const compResult = await summarize(model, messages, summary);
-  // messages = compResult.messages;
-  // summary = compResult.summary;
-  // const afterSumTokens = estimateTokens(messages);
-  // if (compResult.compressedCount > 0) {
-  //   console.log(
-  //     `[Layer 2: Summarization] 压缩了 ${compResult.compressedCount} 条消息, ~${afterSumTokens} tokens`,
-  //   );
-  //   console.log(`[摘要预览] ${summary.slice(0, 150)}...`);
-  // } else {
-  //   console.log(`[Layer 2: Summarization] 未触发（消息量不够）`);
-  // }
-
-  // console.log(
-  //   `[压缩后] ${messages.length} 条消息, ~${afterSumTokens} tokens (节省 ${beforeTokens - afterSumTokens} tokens)\n`,
-  // );
 
   const timestamps = new Map<number, number>();
   const tracker = new UsageTracker(".usage/today.jsonl");
@@ -362,14 +305,6 @@ async function main() {
 
   const defense = applyDefense(messages, timestamps);
   messages = defense.messages;
-  console.log(`[Layer 2: 截断] ${defense.truncated} 个超长结果被截断`);
-  console.log(
-    `[Layer 3: TTL] ${defense.softPruned} 个软修剪, ${defense.hardPruned} 个硬清除`,
-  );
-  console.log(
-    `[防线后] ${messages.length} 条消息, ~${defense.tokenEstimate} tokens (节省 ${beforeTokens - defense.tokenEstimate})`,
-  );
-  console.log(`====================\n`);
 
   // Clear injected history for chat — compression demo is done
   messages = [];
@@ -379,159 +314,19 @@ async function main() {
     .pipe("coreRules", coreRules())
     .pipe("toolGuide", toolGuide())
     .pipe("deferredTools", deferredTools())
+    .pipe("memoryContext", () => memoryStore.buildPromptSection())
     .pipe("sessionContext", sessionContext());
-
-  const promptCtx: PromptContext = {
-    toolCount: registry.getActiveTools().length,
-    deferredToolSummary: registry.getDeferredToolSummary(),
-    sessionMessageCount: messages.length,
-    sessionId,
-  };
-  const SYSTEM = builder.build(promptCtx);
-  builder.debug(promptCtx); // 显示各模块状态
-
-  // const deferredSummary = registry.getDeferredToolSummary();
-
-  for (const tool of registry.getAll()) {
-    const isMCP = tool.name.startsWith("mcp__");
-    const flags = [
-      isMCP ? "MCP" : "内置",
-      tool.isConcurrencySafe ? "可并发" : "串行",
-    ].join(", ");
-    // console.log(`  - ${tool.name}（${flags}）`);
-  }
 
   // const messages: ModelMessage[] = [];
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-
-  // Quick triggers for demo
-  function handleQuickTrigger(cmd: string): boolean {
-    const now = Date.now();
-
-    if (cmd === "模拟长对话" || cmd === "sim") {
-      console.log("\n[模拟] 注入 20 条历史消息（含大量工具结果）...");
-      for (let i = 0; i < 5; i++) {
-        const age = (20 - i * 4) * 60 * 1000;
-        const userIdx = messages.length;
-        messages.push({
-          role: "user",
-          content: `第 ${i + 1} 轮：帮我读文件 file-${i}.ts`,
-        });
-        timestamps.set(userIdx, now - age);
-        messages.push({
-          role: "assistant",
-          content: [
-            {
-              type: "tool-call" as const,
-              toolCallId: `sim-${i}`,
-              toolName: "read_file",
-              input: { path: `file-${i}.ts` },
-            },
-          ],
-        });
-        timestamps.set(userIdx + 1, now - age);
-        const bigContent =
-          `// file-${i}.ts\n` +
-          "export function handler() {\n  // ...\n}\n".repeat(200);
-        messages.push({
-          role: "tool",
-          content: [
-            {
-              type: "tool-result" as const,
-              toolCallId: `sim-${i}`,
-              toolName: "read_file",
-              output: bigContent,
-            },
-          ],
-        });
-        timestamps.set(userIdx + 2, now - age);
-        messages.push({
-          role: "assistant",
-          content: [
-            { type: "text" as const, text: `文件 file-${i}.ts 的内容已读取。` },
-          ],
-        });
-        timestamps.set(userIdx + 3, now - age);
-      }
-      const tokens = estimateMessageTokens(messages);
-      console.log(`[模拟完成] ${messages.length} 条消息, ~${tokens} tokens\n`);
-      return true;
-    }
-
-    if (cmd === "执行防线" || cmd === "defend") {
-      console.log("\n--- 执行三层防线 ---");
-      const before = estimateMessageTokens(messages);
-      const def = applyDefense(messages, timestamps);
-      messages = def.messages;
-      console.log(
-        `  [Layer 2] 截断: ${def.truncated} 条, 预算清理: ${def.compacted} 条`,
-      );
-      console.log(
-        `  [Layer 3] 软修剪: ${def.softPruned}, 硬清除: ${def.hardPruned}`,
-      );
-      console.log(
-        `  [结果] ~${before} → ~${def.tokenEstimate} tokens (节省 ${before - def.tokenEstimate})\n`,
-      );
-      return true;
-    }
-
-    if (cmd === "查看状态" || cmd === "status") {
-      const tokens = estimateMessageTokens(messages);
-      const toolMsgs = messages.filter((m) => m.role === "tool").length;
-      console.log(
-        `\n[状态] ${messages.length} 条消息 (${toolMsgs} 条工具结果), ~${tokens} tokens\n`,
-      );
-      return true;
-    }
-
-    // /context: 终端可视化的 context 占用，参考 Claude Code 的 /context
-    if (cmd === "/context" || cmd === "context") {
-      const snapshot = buildContextSnapshot({
-        modelName: process.env.DASHSCOPE_API_KEY
-          ? "Qwen Plus"
-          : "Mock Model (开发用)",
-        modelId: process.env.DASHSCOPE_API_KEY ? "qwen3-6-plus" : "mock-model",
-        windowTokens: 1_000_000,
-        systemPromptChars: SYSTEM.length,
-        toolDescriptionChars: registry
-          .getActiveTools()
-          .reduce(
-            (a, t) =>
-              a +
-              t.name.length +
-              (t.description?.length || 0) +
-              JSON.stringify(t.parameters || {}).length,
-            0,
-          ),
-        memoryChars: 0,
-        skillsChars: 0,
-        messages,
-      });
-      console.log(renderContextView(snapshot));
-      return true;
-    }
-
-    if (cmd === "/usage" || cmd === "usage") {
-      console.log(renderUsageView(tracker));
-      return true;
-    }
-
-    if (cmd === "/cache off" || cmd === "cache off") {
-      // setCacheEnabled(false);
-      console.log(
-        "\n  \x1b[38;5;220m⚠ 已关闭 cache 模拟\x1b[0m  接下来每次请求都按 cache miss 计算\n",
-      );
-      return true;
-    }
-    if (cmd === "/cache on" || cmd === "cache on") {
-      // setCacheEnabled(true);
-      console.log("\n  \x1b[38;5;36m✓ 已开启 cache 模拟\x1b[0m\n");
-      return true;
-    }
-
-    return false;
+  function makePromptCtx(): PromptContext {
+    return {
+      toolCount: registry.getActiveTools().length,
+      deferredToolSummary: registry.getDeferredToolSummary(),
+      sessionMessageCount: messages.length,
+      sessionId: "default",
+    };
   }
-
   //   const SYSTEM = `你是 Super Agent，一个有工具调用能力的 AI 助手。
   // 你有内置工具和 MCP 工具可用。MCP 工具以 mcp__ 开头，如 mcp__github__list_issues。
   // 需要查询 GitHub 信息时，使用 mcp__github__ 前缀的工具。
@@ -548,27 +343,56 @@ async function main() {
         return;
       }
 
-      if (handleQuickTrigger(trimmed)) {
+      const ctx: CommandContext = {
+        messages,
+        timestamps,
+        registry,
+        builder,
+        tracker,
+        sessionStore: store,
+        model,
+        makePromptCtx,
+        ask,
+        memoryStore,
+      };
+      const handled = dispatch(trimmed, ctx);
+      if (handled === "async") return;
+      if (handled) {
         ask();
         return;
       }
 
       const useMessage: ModelMessage = { role: "user", content: trimmed };
       messages.push(useMessage);
+      timestamps.set(messages.length - 1, Date.now());
       store.append(useMessage);
 
+      // 加了记忆，每次都构建下 system prompt，演示效果更明显
+      const currentSystem = builder.build(makePromptCtx());
       const beforeLen = messages.length;
-      await agentLoop(model, registry, messages, SYSTEM, tracker);
+      await agentLoop(model, registry, messages, currentSystem, tracker);
 
       // 持久化本轮新增的消息（agent loop 会往 messages 里 push assistant/tool 消息）
       const newMessages = messages.slice(beforeLen);
+      const now = Date.now();
+      for (let i = beforeLen; i < messages.length; i++) timestamps.set(i, now);
       store.appendAll(newMessages);
+
+      console.log(`  [Token] ~${estimateMessageTokens(messages)} tokens`);
       ask();
     });
   }
 
-  console.log('\nSuper Agent v0.5 — MCP (type "exit" to quit)');
-  console.log('试试："查看 vercel/ai 的 issues"、"搜索 MCP 相关的仓库"\n');
+  console.log('Super Agent v0.11 — Memory System (type "exit" to quit)');
+  console.log("快捷命令：");
+  console.log("  /memory         — 查看所有记忆");
+  console.log("  /memory search  — 搜索记忆");
+  console.log("  /context        — 终端里看 context 占用矩阵");
+  console.log("  /usage          — 累计 token 用量和成本");
+  console.log("  status          — 当前消息数、token 和记忆数");
+  console.log("");
+  console.log(`  已加载 ${memoryStore.list().length} 条历史记忆`);
+  console.log("");
   ask();
 }
 

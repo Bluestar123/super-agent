@@ -30,3 +30,13 @@
 {"type":"message","timestamp":"2026-05-30T08:48:41.932Z","message":{"role":"assistant","content":[{"type":"text","text":"收到！缓存已关闭（当前会话不依赖缓存，所有操作均实时执行）。  \n如有任何任务，比如读文件、改代码、查网页、调 GitHub……直接说，我立刻处理。"}]}}
 {"type":"message","timestamp":"2026-05-30T08:48:45.939Z","message":{"role":"user","content":"/cache"}}
 {"type":"message","timestamp":"2026-05-30T08:48:49.267Z","message":{"role":"assistant","content":[{"type":"text","text":"`/cache` 不是一个有效路径或命令。你是指：\n\n- 想查看或清理本地缓存目录？  \n- 想检查某个缓存相关文件（如 `.cache/`）？  \n- 还是误输入，实际想操作其他路径（如 `/app`、`./src` 等）？\n\n你可以告诉我具体意图，例如：  \n- “列出 `.cache/` 目录内容”  \n- “删除 `./cache/` 文件夹”  \n- “搜索项目中所有缓存配置”\n\n我来帮你执行 👇"}]}}
+{"type":"message","timestamp":"2026-06-05T12:32:25.443Z","message":{"role":"user","content":"记住我喜欢用 TypeScript"}}
+{"type":"message","timestamp":"2026-06-05T12:32:27.832Z","message":{"role":"assistant","content":[{"type":"tool-call","toolCallId":"call_b1eff87e9c474f2389a8c7","toolName":"memory","input":{"action":"save","name":"preferred_language","type":"user","description":"用户偏好的编程语言","content":"TypeScript"}}]}}
+{"type":"message","timestamp":"2026-06-05T12:32:27.832Z","message":{"role":"tool","content":[{"type":"tool-result","toolCallId":"call_b1eff87e9c474f2389a8c7","toolName":"memory","output":{"type":"text","value":"已保存到记忆: user_preferred-language.md"}}]}}
+{"type":"message","timestamp":"2026-06-05T12:32:27.832Z","message":{"role":"assistant","content":[{"type":"text","text":"已记住你偏好使用 TypeScript。"}]}}
+{"type":"message","timestamp":"2026-06-05T13:21:20.497Z","message":{"role":"user","content":"我的记忆"}}
+{"type":"message","timestamp":"2026-06-05T13:21:22.812Z","message":{"role":"assistant","content":[{"type":"tool-call","toolCallId":"call_a9f31daa50884a62b94435","toolName":"memory","input":{"action":"list"}}]}}
+{"type":"message","timestamp":"2026-06-05T13:21:22.812Z","message":{"role":"tool","content":[{"type":"tool-result","toolCallId":"call_a9f31daa50884a62b94435","toolName":"memory","output":{"type":"text","value":"记忆列表（共 1 条记忆）：\n  [user] preferred_language — 用户偏好的编程语言"}}]}}
+{"type":"message","timestamp":"2026-06-05T13:21:22.812Z","message":{"role":"assistant","content":[{"type":"text","text":"你当前有一条记忆：\n\n- **preferred_language**（类型：user）：用户偏好的编程语言 → 内容为 \"TypeScript\""}]}}
+{"type":"message","timestamp":"2026-06-05T14:04:33.675Z","message":{"role":"user","content":"这个项目之前出过问题，修改代码时要谨慎小心"}}
+{"type":"message","timestamp":"2026-06-05T14:04:35.039Z","message":{"role":"assistant","content":[{"type":"text","text":"收到。我会在修改代码前先读取相关文件，确认上下文，再谨慎操作。请告诉我具体要修改什么，或提供问题描述、文件路径等信息。"}]}}
