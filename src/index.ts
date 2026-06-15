@@ -1,4 +1,5 @@
 import "dotenv/config";
+import fs from 'node:fs';
 import { type ModelMessage } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createMockModel } from "./mock-model";
@@ -6,6 +7,7 @@ import { createInterface } from "node:readline";
 import { agentLoop, type BudgetState } from "./agent/loop";
 import { ToolDefinition, ToolRegistry } from "./tools/registry";
 import { allTools } from "./tools";
+import { createRagTools } from './tools/rag-tools';
 import { createToolSearchTool } from "./tools/tool-search";
 import { createMemoryTool } from "./tools/memory-tools.js";
 import { MCPClient } from "./tools/mcp-client";
@@ -31,6 +33,14 @@ import { createDispatcher, type CommandContext } from "./commands/index";
 import { debugCommands } from "./commands/debug";
 import { contextCommands } from "./commands/context";
 import { memoryCommands } from "./commands/memory";
+import { ragCommands } from './commands/rag.js';
+import { memoryContext, ragContext } from './context/prompt-pipes';
+import { chunkDocument } from './rag/chunker.js';
+import { createMockEmbedder, createDashScopeEmbedder, embed } from './rag/embedder.js';
+// 内存版本，重启就会重新计算
+import { VectorStore } from './rag/store.js';
+// SQLite 版本，直接入库
+import { SqliteVectorStore } from './rag/sqlite-store.js';
 
 // ── Registry ────────────────────────────────
 const registry = new ToolRegistry();
@@ -41,6 +51,13 @@ registry.register(createToolSearchTool(registry));
 const memoryStore = new MemoryStore(".");
 memoryStore.init();
 registry.register(createMemoryTool(memoryStore));
+
+// ── RAG ──��─────────────────────────────
+const vectorStore = new SqliteVectorStore('knowledge.db') //new VectorStore();
+const embedFn = process.env.DASHSCOPE_API_KEY
+  ? createDashScopeEmbedder(process.env.DASHSCOPE_API_KEY)
+  : createMockEmbedder();
+registry.register(...createRagTools(vectorStore, embedFn));
 
 // 模拟额外的 MCP 工具（演示工具膨胀问题）
 function registerSimulatedTools() {
@@ -256,6 +273,7 @@ const dispatch = createDispatcher([
   ...debugCommands,
   ...contextCommands,
   ...memoryCommands,
+  ...ragCommands,
 ]);
 
 // console.log(`已注册 ${registry.getAll().length} 个工具：`);
@@ -315,6 +333,7 @@ async function main() {
     .pipe("toolGuide", toolGuide())
     .pipe("deferredTools", deferredTools())
     .pipe("memoryContext", () => memoryStore.buildPromptSection())
+    .pipe('ragContext', ragContext(vectorStore))
     .pipe("sessionContext", sessionContext());
 
   // const messages: ModelMessage[] = [];
@@ -354,6 +373,7 @@ async function main() {
         makePromptCtx,
         ask,
         memoryStore,
+        vectorStore
       };
       const handled = dispatch(trimmed, ctx);
       if (handled === "async") return;
@@ -393,6 +413,22 @@ async function main() {
   console.log("");
   console.log(`  已加载 ${memoryStore.list().length} 条历史记忆`);
   console.log("");
+
+  if (fs.existsSync('docs')) {
+    const files = fs.readdirSync('docs').filter(f => f.endsWith('.md'));
+    if (files.length > 0) {
+      console.log(`  发现 ${files.length} 个文档，自动导入知识库...`);
+      for (const f of files) {
+        const path = `docs/${f}`;
+        const text = fs.readFileSync(path, 'utf-8');
+        const chunks = chunkDocument(path, text);
+        const embeddings = await embed(embedFn, chunks.map(c => c.text));
+        vectorStore.addBatch(chunks.map((c, i) => ({ chunk: c, embedding: embeddings[i] })));
+        console.log(`    ${f} → ${chunks.length} 个片段`);
+      }
+      console.log(`  知识库就绪，共 ${vectorStore.size()} 个片段\n`);
+    }
+  }
   ask();
 }
 
