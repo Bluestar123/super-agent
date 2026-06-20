@@ -334,7 +334,7 @@ async function main() {
     .pipe("coreRules", coreRules())
     .pipe("toolGuide", toolGuide())
     .pipe("deferredTools", deferredTools())
-    .pipe("memoryContext", () => memoryStore.buildPromptSection())
+    .pipe("memoryContext", memoryContext(memoryStore))
     .pipe('ragContext', ragContext(vectorStore))
     .pipe("sessionContext", sessionContext());
 

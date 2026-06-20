@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { MemoryStore } from "../memory/store";
 import type { ToolDefinition } from "./registry";
 
@@ -5,13 +6,13 @@ export function createMemoryTool(memoryStore: MemoryStore): ToolDefinition {
   return {
     name: "memory",
     description:
-      "管理跨会话记忆。action: save（保存）| list（列表）| search（搜索）| read（读取）| delete（删除）",
+      "管理跨会话记忆。action: save（保存）| list（列表）| search（搜索）| read（读取）| delete（删除）| lint（健康检查）",
     parameters: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["save", "list", "search", "read", "delete"],
+          enum: ["save", "list", "search", "read", "delete", "lint"],
         },
         name: { type: "string", description: "记忆名称（save 时必填）" },
         description: {
@@ -60,13 +61,13 @@ export function createMemoryTool(memoryStore: MemoryStore): ToolDefinition {
           );
         }
         case "search": {
-          const results = memoryStore.search(args.query || "");
+          const results = memoryStore.search(args.query || "", 10);
           if (results.length === 0)
             return `没有找到与 "${args.query}" 相关的记忆。`;
           return (
             `搜索结果（${results.length} 条匹配）：\n` +
             results
-              .map((e) => `  [${e.type}] ${e.name} — ${e.description}`)
+              .map((h) => `  [${h.entry.type}] ${h.entry.name} — ${h.entry.description}`)
               .join("\n")
           );
         }
@@ -82,6 +83,20 @@ export function createMemoryTool(memoryStore: MemoryStore): ToolDefinition {
           return memoryStore.delete(args.filename)
             ? `已删除: ${args.filename}`
             : `文件不存在: ${args.filename}`;
+        }
+        case "lint": {
+          const reports = memoryStore.lint();
+          if (reports.length === 0) return "记忆库健康，没有发现问题。";
+          return (
+            `记忆库 ${reports.length} 条有警告：\n` +
+            reports
+              .map((r) => {
+                const filename = path.basename(r.entry.filePath);
+                const issues = r.issues.map(i => i.message).join('; ');
+                return `  [${r.entry.type}] ${filename} (${r.entry.name}): ${issues}`;
+              })
+              .join("\n")
+          );
         }
         default:
           return `未知操作: ${args.action}`;
