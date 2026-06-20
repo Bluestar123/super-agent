@@ -41,6 +41,7 @@ import { createMockEmbedder, createDashScopeEmbedder, embed } from './rag/embedd
 import { VectorStore } from './rag/store.js';
 // SQLite 版本，直接入库
 import { SqliteVectorStore } from './rag/sqlite-store.js';
+import { dreamCommands } from "./commands/dream";
 
 // ── Registry ────────────────────────────────
 const registry = new ToolRegistry();
@@ -274,6 +275,7 @@ const dispatch = createDispatcher([
   ...contextCommands,
   ...memoryCommands,
   ...ragCommands,
+  ...dreamCommands
 ]);
 
 // console.log(`已注册 ${registry.getAll().length} 个工具：`);
