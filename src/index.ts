@@ -42,6 +42,8 @@ import { VectorStore } from './rag/store.js';
 // SQLite 版本，直接入库
 import { SqliteVectorStore } from './rag/sqlite-store.js';
 import { dreamCommands } from "./commands/dream";
+import { SkillLoader } from "./skills/loader";
+import { createSkillCommands } from "./commands/skill";
 
 // ── Registry ────────────────────────────────
 const registry = new ToolRegistry();
@@ -269,13 +271,20 @@ async function connectMCP() {
   // console.log(`  已注册 ${tools.length} 个 Mock MCP 工具`);
 }
 
+
+// ── Skills ────────────────────────────────
+const skillLoader = new SkillLoader('.');
+const loadedSkills = skillLoader.load();
+const activeSkills = new Set<string>();
+
 // ── Commands ────────────────────────────────
 const dispatch = createDispatcher([
   ...debugCommands,
   ...contextCommands,
   ...memoryCommands,
   ...ragCommands,
-  ...dreamCommands
+  ...dreamCommands,
+  ...createSkillCommands(skillLoader, activeSkills),
 ]);
 
 // console.log(`已注册 ${registry.getAll().length} 个工具：`);
@@ -336,6 +345,7 @@ async function main() {
     .pipe("deferredTools", deferredTools())
     .pipe("memoryContext", memoryContext(memoryStore))
     .pipe('ragContext', ragContext(vectorStore))
+    .pipe('skillContext', () => skillLoader.buildPromptSection(activeSkills))
     .pipe("sessionContext", sessionContext());
 
   // const messages: ModelMessage[] = [];
@@ -383,7 +393,6 @@ async function main() {
         ask();
         return;
       }
-
       const useMessage: ModelMessage = { role: "user", content: trimmed };
       messages.push(useMessage);
       timestamps.set(messages.length - 1, Date.now());
