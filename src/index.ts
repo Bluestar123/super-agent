@@ -44,6 +44,12 @@ import { SqliteVectorStore } from './rag/sqlite-store.js';
 import { dreamCommands } from "./commands/dream";
 import { SkillLoader } from "./skills/loader";
 import { createSkillCommands } from "./commands/skill";
+import { PluginManager } from './plugins/manager.js';
+import { supabasePlugin } from './plugins/supabase-plugin.js';
+import { createPluginCommands } from './commands/plugin';
+import type { PluginDefinition } from './plugins/types.js';
+
+
 
 // ── Registry ────────────────────────────────
 const registry = new ToolRegistry();
@@ -277,6 +283,12 @@ const skillLoader = new SkillLoader('.');
 const loadedSkills = skillLoader.load();
 const activeSkills = new Set<string>();
 
+// ── Plugins ────────────────────────────────
+const pluginManager = new PluginManager(registry);
+const availablePlugins = new Map<string, PluginDefinition>([
+  ['supabase', supabasePlugin],
+]);
+
 // ── Commands ────────────────────────────────
 const dispatch = createDispatcher([
   ...debugCommands,
@@ -285,6 +297,7 @@ const dispatch = createDispatcher([
   ...ragCommands,
   ...dreamCommands,
   ...createSkillCommands(skillLoader, activeSkills),
+  ...createPluginCommands(pluginManager, availablePlugins),
 ]);
 
 // console.log(`已注册 ${registry.getAll().length} 个工具：`);
@@ -307,6 +320,17 @@ const model = process.env.DASHSCOPE_API_KEY
 
 async function main() {
   await connectMCP();
+
+  // 启动时自动加载插件
+  console.log('  加载插件...');
+  for (const [name, def] of availablePlugins) {
+    try {
+      const tools = await pluginManager.load(def);
+      console.log(`  ✓ ${name} — ${tools.length} 个工具`);
+    } catch {
+      console.log(`  ✗ ${name} — 加载失败`);
+    }
+  }
 
   // Session 持久化
   const isContinue = process.argv.includes("--continue");
@@ -367,10 +391,19 @@ async function main() {
   function ask() {
     rl.question("\nYou: ", async (input) => {
       const trimmed = input.trim();
-      if (!trimmed || trimmed === "exit") {
+      if (trimmed === "exit") {
         console.log("Bye!");
-        await registry.closeAllMCP();
+        // await registry.closeAllMCP();
+        // await pluginManager.unloadAll();
+        await Promise.all([
+          registry.closeAllMCP(),
+          pluginManager.unloadAll(),
+        ]);
         rl.close();
+        return;
+      }
+      if (!trimmed) {
+        ask();
         return;
       }
 

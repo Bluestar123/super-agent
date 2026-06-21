@@ -88,9 +88,9 @@ export class ToolRegistry {
 
     const names = q.includes(",")
       ? q
-          .split(",")
-          .map((n) => n.trim())
-          .filter(Boolean)
+        .split(",")
+        .map((n) => n.trim())
+        .filter(Boolean)
       : [q];
 
     for (const name of names) {
@@ -102,6 +102,12 @@ export class ToolRegistry {
     }
     return results;
   }
+
+  unregister(name: string): boolean {
+    this.discoveredTools.delete(name);
+    return this.tools.delete(name);
+  }
+
 
   getActiveTools(): ToolDefinition[] {
     return this.getAll().filter((tool) => {
