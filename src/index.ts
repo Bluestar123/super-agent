@@ -48,6 +48,9 @@ import { PluginManager } from './plugins/manager.js';
 import { supabasePlugin } from './plugins/supabase-plugin.js';
 import { createPluginCommands } from './commands/plugin';
 import type { PluginDefinition } from './plugins/types.js';
+import { ChannelGateway } from "./channels/gateway";
+import { FeishuChannel } from "./channels/feishu";
+import { createChannelCommands } from "./commands/channel";
 
 
 
@@ -289,6 +292,46 @@ const availablePlugins = new Map<string, PluginDefinition>([
   ['supabase', supabasePlugin],
 ]);
 
+const qwen = createOpenAI({
+  baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  apiKey: process.env.DASHSCOPE_API_KEY,
+});
+
+const model = process.env.DASHSCOPE_API_KEY
+  ? qwen.chat("qwen-plus")
+  : createMockModel();
+function makePromptCtx(): PromptContext {
+  return {
+    toolCount: registry.getActiveTools().length,
+    deferredToolSummary: registry.getDeferredToolSummary(),
+    sessionMessageCount: 0,
+    sessionId: "default",
+  };
+}
+const builder = new PromptBuilder()
+  .pipe("coreRules", coreRules())
+  .pipe("toolGuide", toolGuide())
+  .pipe("deferredTools", deferredTools())
+  .pipe("memoryContext", memoryContext(memoryStore))
+  .pipe('ragContext', ragContext(vectorStore))
+  .pipe('skillContext', () => skillLoader.buildPromptSection(activeSkills))
+  .pipe("sessionContext", sessionContext());
+
+// ── Channel Gateway ────────────────────────────────
+const gateway = new ChannelGateway({
+  model,
+  registry,
+  buildSystem: () => builder.build(makePromptCtx()),
+});
+
+const FEISHU_PORT = Number(process.env.FEISHU_PORT || '3000');
+const feishuChannel = new FeishuChannel({
+  appId: process.env.FEISHU_APP_ID || '',
+  appSecret: process.env.FEISHU_APP_SECRET || '',
+  port: FEISHU_PORT,
+});
+gateway.register(feishuChannel);
+
 // ── Commands ────────────────────────────────
 const dispatch = createDispatcher([
   ...debugCommands,
@@ -298,6 +341,7 @@ const dispatch = createDispatcher([
   ...dreamCommands,
   ...createSkillCommands(skillLoader, activeSkills),
   ...createPluginCommands(pluginManager, availablePlugins),
+  ...createChannelCommands(gateway)
 ]);
 
 // console.log(`已注册 ${registry.getAll().length} 个工具：`);
@@ -309,14 +353,6 @@ for (const tool of registry.getAll()) {
   // console.log(`  - ${tool.name}（${flags}）`);
 }
 
-const qwen = createOpenAI({
-  baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  apiKey: process.env.DASHSCOPE_API_KEY,
-});
-
-const model = process.env.DASHSCOPE_API_KEY
-  ? qwen.chat("qwen-plus")
-  : createMockModel();
 
 async function main() {
   await connectMCP();
@@ -331,6 +367,9 @@ async function main() {
       console.log(`  ✗ ${name} — 加载失败`);
     }
   }
+  // 启动 Channel
+  console.log('  启动 Channel...');
+  await gateway.startAll();
 
   // Session 持久化
   const isContinue = process.argv.includes("--continue");
@@ -363,25 +402,9 @@ async function main() {
   messages = [];
   timestamps.clear();
 
-  const builder = new PromptBuilder()
-    .pipe("coreRules", coreRules())
-    .pipe("toolGuide", toolGuide())
-    .pipe("deferredTools", deferredTools())
-    .pipe("memoryContext", memoryContext(memoryStore))
-    .pipe('ragContext', ragContext(vectorStore))
-    .pipe('skillContext', () => skillLoader.buildPromptSection(activeSkills))
-    .pipe("sessionContext", sessionContext());
-
   // const messages: ModelMessage[] = [];
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  function makePromptCtx(): PromptContext {
-    return {
-      toolCount: registry.getActiveTools().length,
-      deferredToolSummary: registry.getDeferredToolSummary(),
-      sessionMessageCount: messages.length,
-      sessionId: "default",
-    };
-  }
+
   //   const SYSTEM = `你是 Super Agent，一个有工具调用能力的 AI 助手。
   // 你有内置工具和 MCP 工具可用。MCP 工具以 mcp__ 开头，如 mcp__github__list_issues。
   // 需要查询 GitHub 信息时，使用 mcp__github__ 前缀的工具。
@@ -395,9 +418,11 @@ async function main() {
         console.log("Bye!");
         // await registry.closeAllMCP();
         // await pluginManager.unloadAll();
+
         await Promise.all([
           registry.closeAllMCP(),
           pluginManager.unloadAll(),
+          gateway.stopAll()
         ]);
         rl.close();
         return;
