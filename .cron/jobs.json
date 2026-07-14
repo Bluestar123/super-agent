@@ -1,0 +1,16 @@
+{
+  "jobs": [
+    {
+      "id": "quote-task-001",
+      "name": "random-quote",
+      "schedule": "every 30s",
+      "scheduleType": "interval",
+      "enabled": true,
+      "payload": {
+        "type": "handler",
+        "handler": "random-quote"
+      },
+      "source": "runtime"
+    }
+  ]
+}

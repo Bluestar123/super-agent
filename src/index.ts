@@ -56,7 +56,14 @@ import { HookPipeline } from './security/hooks.js';
 import { classifyBashCommand } from './security/bash-classifier';
 import { createSecurityCommands } from './commands/security';
 
+import { CronService } from './cron/service.js';
+import { createCronTool } from './tools/cron-tools';
+import { createCronCommands } from './commands/cron';
 
+import { SubAgentRegistry } from './agent/registry';
+import { createSpawnTool } from './tools/spawn-tools.js';
+import { createAgentCommands } from './commands/agent';
+import type { SpawnContext } from './agent/spawn';
 
 // ── Registry ────────────────────────────────
 const registry = new ToolRegistry();
@@ -322,6 +329,26 @@ hookPipeline.registerPost('bash-timestamp', (toolName, _input, output) => {
 
 registry.setHookPipeline(hookPipeline);
 
+// ── Cron Service ────────────────────────────────
+const cronService = new CronService('.');
+registry.register(createCronTool(cronService));
+
+
+// ── Sub-Agent ────────────────────────────────
+const agentRegistry = new SubAgentRegistry({ maxSpawnDepth: 1, maxConcurrent: 3 });
+
+function getSpawnCtx(): SpawnContext {
+  return {
+    model,
+    registry,
+    agentRegistry,
+    buildSystem: () => builder.build(makePromptCtx()),
+    currentDepth: 0,
+  };
+}
+
+registry.register(createSpawnTool(agentRegistry, getSpawnCtx));
+
 
 
 const qwen = createOpenAI({
@@ -375,6 +402,8 @@ const dispatch = createDispatcher([
   ...createPluginCommands(pluginManager, availablePlugins),
   ...createChannelCommands(gateway),
   ...createSecurityCommands(registry, hookPipeline),
+  ...createCronCommands(cronService),
+  ...createAgentCommands(agentRegistry),
 ]);
 
 // console.log(`已注册 ${registry.getAll().length} 个工具：`);
@@ -403,6 +432,33 @@ async function main() {
   // 启动 Channel
   console.log('  启动 Channel...');
   await gateway.startAll();
+
+
+  // cronService.load();
+  // cronService.setExecutor({
+  //   runAgentPrompt: async (prompt, timeout) => {
+  //     const cronMessages: ModelMessage[] = [{ role: 'user', content: prompt }];
+  //     const system = builder.build(makePromptCtx());
+  //     await agentLoop(model, registry, cronMessages, system);
+  //     const lastMsg = cronMessages[cronMessages.length - 1];
+  //     if (!lastMsg) return '(无输出)';
+  //     if (typeof lastMsg.content === 'string') return lastMsg.content;
+  //     if (Array.isArray(lastMsg.content)) {
+  //       return lastMsg.content
+  //         .filter((p: any) => p.type === 'text')
+  //         .map((p: any) => p.text)
+  //         .join('') || '(无输出)';
+  //     }
+  //     return String(lastMsg.content);
+  //   },
+  //   notify: (message) => {
+  //     console.log(`\n${message}`);
+  //   },
+  // });
+  // cronService.start();
+  // const cronJobs = cronService.list();
+  // console.log(`  Cron: ${cronJobs.length} 个任务已加载`);
+
 
   // Session 持久化
   const isContinue = process.argv.includes("--continue");
@@ -458,6 +514,7 @@ async function main() {
           gateway.stopAll()
         ]);
         rl.close();
+        cronService.stop();
         return;
       }
       if (!trimmed) {
