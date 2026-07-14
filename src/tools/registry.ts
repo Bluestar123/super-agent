@@ -1,5 +1,9 @@
 import { jsonSchema } from "ai";
 import { MCPClient } from "./mcp-client";
+import type { Role } from '../security/roles';
+import type { HookPipeline } from '../security/hooks';
+import { canUseTool } from '../security/roles.js';
+import { classifyBashCommand } from "../security/bash-classifier";
 
 export interface ToolDefinition {
   name: string;
@@ -15,6 +19,8 @@ export interface ToolDefinition {
   // 描述这个工具能做什么。比如浏览器导航工具的 hint 是 "browser navigate open url webpage"，
   // Supabase 查询工具的 hint 是 "supabase database sql query select"
   searchHint?: string; // 搜索提示词， 帮助 toolsearch 匹配
+
+  profile?: string[];
 }
 
 const DEFAULT_MAX_RESULT_CHARS = 3000;
@@ -30,6 +36,11 @@ export class ToolRegistry {
   private waitQueue: Array<() => void> = []; // 阻塞等待中的 resolve 函数
 
   private discoveredTools = new Set<string>();
+
+  private currentRole: Role = 'owner';
+  private hookPipeline?: HookPipeline;
+
+  private activeProfile: string = 'full';
 
   register(...tools: ToolDefinition[]): void {
     for (const tool of tools) {
@@ -108,10 +119,15 @@ export class ToolRegistry {
     return this.tools.delete(name);
   }
 
-
   getActiveTools(): ToolDefinition[] {
-    return this.getAll().filter((tool) => {
+    return this.getAll().filter(tool => {
+      if (tool.profile && !tool.profile.includes(this.activeProfile)) {
+        return false;
+      }
       if (tool.shouldDefer && !this.discoveredTools.has(tool.name)) {
+        return false;
+      }
+      if (!canUseTool(this.currentRole, tool.name)) {
         return false;
       }
       return true;
@@ -155,6 +171,30 @@ export class ToolRegistry {
     }
 
     return { active, deferred, total: active + deferred };
+  }
+
+  setProfile(profile: string): void {
+    this.activeProfile = profile;
+  }
+
+  getProfile(): string {
+    return this.activeProfile;
+  }
+
+  setRole(role: Role): void {
+    this.currentRole = role;
+  }
+
+  getRole(): Role {
+    return this.currentRole;
+  }
+
+  setHookPipeline(pipeline: HookPipeline): void {
+    this.hookPipeline = pipeline;
+  }
+
+  markDiscovered(name: string): void {
+    this.discoveredTools.add(name);
   }
 
   get(name: string): ToolDefinition | undefined {
@@ -208,10 +248,34 @@ export class ToolRegistry {
       const isSafe = tool.isConcurrencySafe === true;
       const registry = this;
 
+      const hookPipeline = registry.hookPipeline;
+      const toolName = tool.name;
       result[tool.name] = {
         description: tool.description,
         inputSchema: jsonSchema(tool.parameters as any),
         execute: async (input: any) => {
+          // 在 execute 函数里，实际调用前：
+          if (toolName === 'bash' && input?.command) {
+            const risk = classifyBashCommand(input.command);
+            if (risk.level === 'dangerous') {
+              return `[拒绝执行] 检测到危险操作: ${risk.reason}\n命令: ${input.command}`;
+            }
+            if (risk.level === 'moderate') {
+              console.log(`  [安全] ⚠ ${risk.reason}: ${input.command}`);
+            }
+          }
+
+          // pre hook
+          if (hookPipeline) {
+            const preResult = await hookPipeline.runPre(toolName, input);
+            if (preResult.action === 'block') {
+              return `[Hook 拦截] ${preResult.reason || '操作被阻止'}`;
+            }
+            if (preResult.action === 'modify' && preResult.modifiedInput !== undefined) {
+              input = preResult.modifiedInput;
+            }
+          }
+
           // 在真正执行前先按 isConcurrencySafe 获取锁
           if (isSafe) {
             await registry.acquireConcurrent();
@@ -224,7 +288,15 @@ export class ToolRegistry {
             const raw = await executeFn(input);
             const text =
               typeof raw === "string" ? raw : JSON.stringify(raw, null, 2);
-            return truncateResult(text, maxChars);
+            let output = truncateResult(text, maxChars);
+            // Post Hook
+            if (hookPipeline) {
+              const postResult = await hookPipeline.runPost(toolName, input, output);
+              if (postResult.modifiedOutput !== undefined) {
+                output = String(postResult.modifiedOutput);
+              }
+            }
+            return output;
           } finally {
             // 不管成功还是抛异常，锁都要释放
             if (isSafe) {

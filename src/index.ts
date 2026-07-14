@@ -52,6 +52,10 @@ import { ChannelGateway } from "./channels/gateway";
 import { FeishuChannel } from "./channels/feishu";
 import { createChannelCommands } from "./commands/channel";
 
+import { HookPipeline } from './security/hooks.js';
+import { classifyBashCommand } from './security/bash-classifier';
+import { createSecurityCommands } from './commands/security';
+
 
 
 // ── Registry ────────────────────────────────
@@ -292,6 +296,34 @@ const availablePlugins = new Map<string, PluginDefinition>([
   ['supabase', supabasePlugin],
 ]);
 
+// ── Security: Hook Pipeline ────────────────────────────────
+const hookPipeline = new HookPipeline();
+
+// 示例 Pre Hook: 写文件前记录日志
+hookPipeline.registerPre('audit-log', (toolName, input) => {
+  if (toolName === 'write_file' || toolName === 'edit_file') {
+    const path = (input as any)?.path || 'unknown';
+    console.log(`  [audit] 文件写入操作: ${toolName} → ${path}`);
+  }
+  return { action: 'allow' };
+});
+
+// 示例 Post Hook: 给 bash 输出加时间戳
+hookPipeline.registerPost('bash-timestamp', (toolName, _input, output) => {
+  if (toolName === 'bash') {
+    const timestamp = new Date().toISOString();
+    return {
+      action: 'modify',
+      modifiedOutput: `[${timestamp}]\n${output}`,
+    };
+  }
+  return { action: 'allow' };
+});
+
+registry.setHookPipeline(hookPipeline);
+
+
+
 const qwen = createOpenAI({
   baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   apiKey: process.env.DASHSCOPE_API_KEY,
@@ -341,7 +373,8 @@ const dispatch = createDispatcher([
   ...dreamCommands,
   ...createSkillCommands(skillLoader, activeSkills),
   ...createPluginCommands(pluginManager, availablePlugins),
-  ...createChannelCommands(gateway)
+  ...createChannelCommands(gateway),
+  ...createSecurityCommands(registry, hookPipeline),
 ]);
 
 // console.log(`已注册 ${registry.getAll().length} 个工具：`);
