@@ -7,3 +7,5 @@ node_modules
 .memory
 .vscode
 .qoder
+
+super-agent.config.json

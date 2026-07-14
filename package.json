@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "description": "",
   "type": "module",
-  "main": "index.js",
+  "bin": {
+    "super-agent": "src/index.ts"
+  },
   "scripts": {
     "test": "tsx --test src/**/*.test.ts",
     "dev": "tsx watch src/index.ts",
@@ -24,7 +26,8 @@
     "fast-glob": "^3.3.3",
     "hono": "^4.12.27",
     "react": "^19.2.6",
-    "sqlite-vec": "^0.1.9"
+    "sqlite-vec": "^0.1.9",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
